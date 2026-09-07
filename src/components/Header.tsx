@@ -65,7 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               </div>
               <p className="text-[10px] font-mono text-slate-400">
-                ANTHROPIC CLAUDE 3.7 // NOUS HERMES // PYTHON DUCKDB
+                FINTECH FRAUD &amp; AML INTERCEPTION ENGINE
               </p>
             </div>
           </div>
