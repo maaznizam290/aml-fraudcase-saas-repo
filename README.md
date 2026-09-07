@@ -35,6 +35,8 @@ The application and interactive API will be live at:
 - **Web App Dashboard & Simulators**: `http://localhost:3000`
 - **Health Check**: `http://localhost:3000/api/health`
 - **Inline Fraud Interception API**: `http://localhost:3000/api/v1/fraud/evaluate`
+- **Audit Verification Endpoint**: `http://localhost:3000/api/v1/audit-log/verify`
+- **OpenAPI 3.0 Specification**: `/swagger.yaml` (Import directly into Swagger UI, Postman, or Insomnia)
 
 ### Production Build & Deployment
 
@@ -48,62 +50,143 @@ npm start
 
 ---
 
-## 🚀 How Does It Work?
+## 🔒 Dual Mode: Demo Simulation vs. Production Live
 
-Veritas operates across three tightly integrated layers:
+Veritas features a dual-mode database and AI execution architecture controlled via `DEMO_MODE` in `.env`:
+
+### 1. Demo Mode (`DEMO_MODE=true` - Default)
+- **Zero External Dependencies Required**: Boots instantly without requiring paid third-party credentials.
+- **In-Memory Thread-Safe Data Store**: Simulates the full Supabase PostgreSQL schema with ACID transaction isolation.
+- **Transparent Heuristic Rules Engine**: Evaluates AML typologies and generates structured JSON recommendations when no Anthropic Claude API key is supplied.
+- **Cryptographic Audit Ledger**: Computes real SHA-256 genesis-to-leaf block hashes in-memory.
+
+### 2. Live Production Mode (`DEMO_MODE=false`)
+- **Fails Loudly on Missing Secrets**: Validates presence of `ANTHROPIC_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY` at server initialization; halts boot if missing.
+- **PostgreSQL with Row Level Security (RLS)**: Connects to Supabase via `@supabase/supabase-js` using service role credentials. Run `supabase/schema.sql` to instantiate tables.
+- **Anthropic Claude 3.5 / 3.7 Sonnet**: Executes prompt-engineered investigations against live customer dossiers.
+- **Slack Block Kit & n8n Webhook Dispatch**: Pushes interactive compliance cards to Slack and orchestrates external webhooks.
+
+---
+
+## 🏗️ Architecture & Component Directory
 
 ```
-                  [ Digital Wallet Client / Payment Switch ]
-                    (JazzCash / Easypaisa / NayaPay / Raast)
-                                      │
-                         HTTP POST /api/v1/fraud/evaluate
-                                      ▼
-             ┌─────────────────────────────────────────────────┐
-             │         VERITAS IN-FLIGHT GATEWAY               │
-             │           (Strict Sub-5ms SLA)                  │
-             └──────────────────────┬──────────────────────────┘
-                                    │
-         ┌──────────────────────────┼──────────────────────────┐
-         ▼                          ▼                          ▼
-┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
-│  developerPratik │      │  jube-home AML   │      │ AI4Finance       │
-│  Random Forest   │      │  Rules Engine    │      │ FinRobot CoT     │
-│  ML (< 5ms)      │      │  (State Machine) │      │ Multi-Agent      │
-└────────┬─────────┘      └────────┬─────────┘      └────────┬─────────┘
-         │                         │                         │
-         └─────────────────────────┼─────────────────────────┘
-                                   ▼
-                ┌──────────────────────────────────────┐
-                │        TRIAGE DECISION MATRIX        │
-                │   ALLOW | CHALLENGE | BLOCK_HOLD     │
-                └──────────────────┬───────────────────┘
-                                   │
-       ┌───────────────────────────┴───────────────────────────┐
-       ▼                                                       ▼
-[ Low Risk (<40%) ]                                   [ High Risk (>50%) ]
-Instant Execution                                    Pre-Tx Interception:
-                                                     • In-App Victim Alert
-                                                     • NADRA Biometric Step-Up
-                                                     • Cooling-Off Safe Hold
+├── server/
+│   ├── db.ts               # Universal Data Access Layer (Supabase Postgres + In-Memory Fallback)
+│   ├── auth.ts             # RBAC (Analyst vs CCO) & Tier 3 Statutory Guardrail Middleware
+│   ├── cryptoAudit.ts      # Cryptographic SHA-256 Chained Immutable Audit Trail
+│   ├── claude.ts           # Anthropic Claude 3.5/3.7 Engine + Heuristic Fallback Pipeline
+│   └── slack.ts            # Slack Block Kit Compliance Alert Card Generator
+├── server.ts               # Express 5.0 Core Server, API Router & Vite Middleware Ingress
+├── supabase/
+│   └── schema.sql          # Production PostgreSQL Schema (RLS Policies, Triggers & Constraints)
+├── src/
+│   ├── context/AppContext  # State Layer synchronized via real HTTP REST calls to backend
+│   ├── components/         # Workspace, Interceptor, Hermes Governance, & Audit Views
+│   └── types.ts            # Enterprise TypeScript Interfaces & Schemas
+└── swagger.yaml            # Complete OpenAPI 3.0.3 Contract
 ```
 
-### 1. In-Flight Pre-Transaction Evaluation (<5ms)
-When a customer taps "Send Money":
-- The mobile wallet dispatches transaction telemetry (amount, rail, sender device fingerprint, SIM-swap delta, recipient account age, and known mule cluster tags) to Veritas.
-- **developerPratik/credit-card-fraud-detector (Random Forest)** runs 100 decision trees to compute a calibrated fraud probability.
-- **jube-home AML Rule Engine** verifies deterministic regulatory scenarios (e.g. CTR structuring in the PKR 48,000–49,999 band, SIM-swap account takeover within 72 hours, or known cybercrime mule clusters).
-- **FinRobot Financial CoT Agents** execute multi-agent chain-of-thought (Data-CoT, Concept-CoT, and Thesis-CoT) to establish context.
+---
 
-### 2. Real-Time Customer Interception
-If the transaction scores high risk:
-- **The transfer is intercepted before debiting funds.**
-- An in-app warning modal appears on the user's phone, warning them against common local scam typologies (e.g. fake lottery prize calls, BISP impersonation, WhatsApp prize fees).
-- The user can **abort the transfer with one click** (`[CANCEL & SECURE MY MONEY]`) or verify via **NADRA Biometric Fingerprint** if it is legitimate.
+## 🛡️ Statutory Guardrails & Regulatory Compliance
 
-### 3. Analyst Investigation & Automated SAR Narrative Drafting
-- Flagged alerts are routed to compliance officers in the **Investigation Workspace**.
-- Compliance officers review graph networks, peer deviation metrics, and AI recommendations.
-- With one click, the system auto-drafts SBP/FinCEN-compliant **Suspicious Activity Reports (SAR)** with cryptographic audit hashes.
+Veritas adheres strictly to FinCEN, OCC Model Risk Management (SR 11-7), and State Bank of Pakistan (SBP) AML/CFT circulars:
+
+1. **Tier 1 — Sovereign Human Gate**:
+   - Veritas AI never autonomously releases held funds, alters risk tiers, or closes cases. Every recommendation must be approved or overridden by an authenticated compliance officer.
+
+2. **Tier 3 — Prohibited Autonomous Actions**:
+   - The backend explicitly rejects autonomous execution of:
+     - Account closure
+     - Credit or loan denial
+     - Autonomous release of held customer funds
+     - Regulatory SAR / STR submission to financial intelligence units without CCO signoff.
+
+3. **Cryptographic Non-Repudiation (SHA-256 Ledger)**:
+   - Each audit entry contains `sequence_number`, `timestamp`, `actor_id`, `action`, `details`, `previous_hash`, and `evidence_hash`.
+   - Any tampering or modification of prior database rows breaks the cryptographic chain verification (`GET /api/v1/audit-log/verify`).
+
+4. **Role-Based Access Control (RBAC)**:
+   - **Compliance Analyst (`analyst`)**: Can review cases, approve dispositions, and submit manual overrides.
+   - **Chief Compliance Officer (`compliance_officer` / MLRO)**: Required to deploy or promote Hermes self-learning heuristic rules to production.
+
+---
+
+## 🧪 Testing & Verification Guide
+
+### 1. Health Check
+```bash
+curl -X GET "http://localhost:3000/api/health"
+```
+
+### 2. In-Flight Pre-Transaction Evaluation (<5ms SLA)
+```bash
+curl -X POST "http://localhost:3000/api/v1/fraud/evaluate" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: veritas_live_jazzcash_sec_9941a" \
+  -d '{
+    "transaction_id": "TX-JC-9941-A",
+    "partner_id": "jazzcash",
+    "rail": "WALLET_P2P",
+    "amount_pkr": 48500,
+    "sender": {
+      "account_id": "03001234567",
+      "device_fingerprint": "dev_imei_99182",
+      "sim_swap_hours_ago": 14.5
+    },
+    "recipient": {
+      "account_id": "03219876543",
+      "account_age_days": 3,
+      "mule_cluster_risk_score": 0.94
+    }
+  }'
+```
+
+### 3. Verify Cryptographic SHA-256 Audit Chain
+```bash
+curl -X GET "http://localhost:3000/api/v1/audit-log/verify"
+```
+
+### 4. Alert Intake & AI Recommendation Pipeline
+```bash
+curl -X POST "http://localhost:3000/api/v1/alerts/intake" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alert_type": "STRUCTURED_DEPOSITS_SMURFING",
+    "customer_id": "cust_99182",
+    "amount": 48500,
+    "rail": "WALLET_P2P",
+    "recipient": "Tariq Mehmood",
+    "recipient_bank": "JazzCash"
+  }'
+```
+
+### 5. Historical Backtest on Hermes Candidate Heuristic
+```bash
+curl -X POST "http://localhost:3000/api/v1/hermes/backtest" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule_id": "crule_001",
+    "min_amount": 25000,
+    "rule_type": "high_amount"
+  }'
+```
+
+### 6. CCO Gated Rule Promotion
+```bash
+# Fails when called by Analyst:
+curl -X POST "http://localhost:3000/api/v1/hermes/rules/crule_001/promote" \
+  -H "Content-Type: application/json" \
+  -H "x-user-id: usr_analyst_01" \
+  -d '{ "target_status": "DEPLOYED" }'
+
+# Succeeds when called by Chief Compliance Officer (David Vance):
+curl -X POST "http://localhost:3000/api/v1/hermes/rules/crule_001/promote" \
+  -H "Content-Type: application/json" \
+  -H "x-user-id: usr_cco_01" \
+  -d '{ "target_status": "DEPLOYED" }'
+```
 
 ---
 
@@ -121,6 +204,7 @@ The single strongest selling point is:
 | **False Positive Rate** | **85% – 95%** (overwhelming compliance teams) | **< 12.6%** (87.4% reduction via multi-agent ML gating) |
 | **Analyst Triage Time** | **35 – 50 minutes** per alert | **< 3.8 minutes** with pre-synthesized FinRobot CoT briefs |
 | **Rule Drift** | Rules remain static for 6–12 months | **Hermes agent automatically proposes and backtests new rules weekly** |
+| **Audit Ledger** | Mutable relational database logs | **Chained SHA-256 cryptographic ledger with tamper verification** |
 | **Infrastructure Cost** | Millions of dollars in legacy licensing | Ultra-lightweight microservices architecture |
 
 ---
@@ -132,34 +216,16 @@ The single strongest selling point is:
 In traditional compliance departments, when fraudsters invent a new scam (e.g., structuring transfers through agent cash-outs at odd hours), humans take **3 to 9 months** to analyze the data, draft a new rule, submit it for committee approval, and deploy it to production. During those months, millions are lost.
 
 ### Hermes solves this through a closed-loop learning cycle:
-
 1. **Observing Analyst Overrides & Feedback**:
-   Hermes continuously monitors every decision compliance analysts make in the workspace. When analysts repeatedly override system recommendations or confirm novel fraud vectors, Hermes identifies the policy gap.
-
+   Hermes continuously monitors decisions compliance analysts make in the workspace. When analysts repeatedly override system recommendations or confirm novel fraud vectors, Hermes captures this in episodic and semantic memory.
 2. **Autonomous Candidate Rule Generation**:
-   Hermes writes new programmatic candidate rules (using declarative SQL/Python logic), defining exact thresholds, conditions, and regulatory references (e.g. SBP Circulars or FinCEN guidance).
-
-3. **Risk-Free Shadow Mode & Backtesting**:
-   Hermes runs newly proposed rules in **Shadow Mode** against the last 90 days of historical transactions (over 100,000+ records). It calculates:
-   - **True Positives Caught**
-   - **False Positive Burden**
-   - **Net Anomaly Precision Gain**
-
-4. **Human-in-the-Loop (HITL) Governance**:
-   Hermes never blindly pushes rules to production. It presents candidate rules on the **Hermes Governance Dashboard** with complete backtest telemetry, allowing the Chief Compliance Officer (CCO) to review, adjust thresholds, and approve or reject with a single click.
-
----
-
-## 🛠️ Tech Stack & Open-Source References
-
-- **Front-End**: React 18, TypeScript, Tailwind CSS, Lucide Icons, Recharts (visualizations)
-- **Back-End Server**: Express.js, Node.js (bundled with `esbuild`), REST API Gateway
-- **Fast ML Engine**: Based on `developerPratik/credit-card-fraud-detector` (Random Forest, sub-5ms latency SLA)
-- **AML Rules Framework**: Based on `jube-home/aml-fraud-transaction-monitoring` (deterministic transaction monitoring)
-- **Multi-Agent Reasoning**: Based on `AI4Finance-Foundation/FinRobot` (Financial Chain-of-Thought)
-- **Governance**: Hermes Agentic Active Learning Architecture
+   Hermes synthesizes declarative candidate heuristics, complete with thresholds, trigger criteria, and regulatory rationale.
+3. **Risk-Free Historical Backtesting**:
+   Evaluates proposed candidate rules against real historical transaction volumes, producing confusion matrices, true/false positive counts, and financial loss prevention metrics.
+4. **Strict CCO Human-in-the-Loop Gate**:
+   Adheres to statutory mandates: no candidate rule can be deployed to production without authenticated Chief Compliance Officer (`compliance_officer`) approval.
 
 ---
 
 ## 📄 License
-MIT License - Open for fintech innovation and regulatory modernization.
+MIT License - Open for fintech innovation, regulatory modernization, and consumer fund protection.

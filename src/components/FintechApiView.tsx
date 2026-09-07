@@ -52,23 +52,38 @@ export const FintechApiView: React.FC = () => {
     setLatencyRecorded(null);
   };
 
-  const handleSendRequest = () => {
+  const handleSendRequest = async () => {
     setIsSending(true);
     const start = performance.now();
 
     try {
       const parsedReq: EvaluateTransactionRequest = JSON.parse(payloadText);
-      setTimeout(() => {
-        const result = evaluateAndInterceptTransaction(parsedReq);
-        const elapsed = +(performance.now() - start).toFixed(2);
-        setLatencyRecorded(elapsed < 1 ? 3.14 : elapsed);
+      const res = await fetch('/api/v1/fraud/evaluate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': 'veritas_live_jazzcash_sec_9941a'
+        },
+        body: JSON.stringify(parsedReq)
+      });
+
+      const elapsed = +(performance.now() - start).toFixed(2);
+      setLatencyRecorded(elapsed);
+
+      if (res.ok) {
+        const result = await res.json();
         setResponseOutput(result);
-        setIsSending(false);
-      }, 350);
+        // Also register pre-transaction interception if flagged
+        evaluateAndInterceptTransaction(parsedReq);
+      } else {
+        const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setResponseOutput(errData);
+      }
+      setIsSending(false);
     } catch (err: any) {
       setIsSending(false);
       setResponseOutput({
-        error: 'INVALID_JSON_PAYLOAD',
+        error: 'NETWORK_REQUEST_FAILED',
         message: err.message
       });
     }
@@ -257,6 +272,17 @@ System.out.println(response.body().string());`;
             <Layers className="w-3.5 h-3.5" />
             <span>REPOS & ARCHITECTURE MAPPING</span>
           </button>
+
+          <a
+            href="/swagger.yaml"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 rounded-xs text-xs font-mono font-bold transition flex items-center gap-1.5 bg-[#0A0C10] text-amber-400 hover:text-amber-300 hover:bg-amber-950/30 border border-amber-500/40 ml-auto"
+            title="Download or View OpenAPI 3.0 YAML Specification"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>SWAGGER.YAML (OPENAPI 3.0)</span>
+          </a>
         </div>
       </div>
 

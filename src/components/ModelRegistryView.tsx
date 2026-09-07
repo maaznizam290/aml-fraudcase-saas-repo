@@ -54,12 +54,12 @@ export const ModelRegistryView: React.FC = () => {
 
       {/* Model Benchmark Comparative Matrix */}
       <div className="bg-[#0A0C10] border border-[#1E293B] rounded-xs overflow-hidden shadow-xl">
-        <div className="p-3 bg-[#0F172A] border-b border-[#1E293B] flex items-center justify-between">
+        <div className="p-3 bg-[#0F172A] border-b border-[#1E293B] flex flex-col sm:flex-row sm:items-center justify-between gap-1">
           <span className="font-bold text-white uppercase text-xs flex items-center gap-2">
             <BarChart2 className="w-4 h-4 text-cyan-400" />
-            COMPARATIVE MODEL BENCHMARKS (KAGGLE CREDIT CARD FRAUD SUITE)
+            OFFLINE BENCHMARK MODELS (KAGGLE CREDIT CARD FRAUD SUITE)
           </span>
-          <span className="text-[10px] text-slate-400">DATASET: 284,807 ROWS // 492 FRAUDS (0.172%)</span>
+          <span className="text-[10px] text-amber-400 font-semibold">*Live runtime currently runs Heuristic Ensembles; ML models offline benchmark</span>
         </div>
 
         <div className="overflow-x-auto">

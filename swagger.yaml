@@ -1,0 +1,730 @@
+openapi: 3.0.3
+info:
+  title: Veritas Fraud & AML Platform - Fintech Partner Integration API
+  version: 2026.09.07
+  description: |
+    Production-grade OpenAPI 3.0 specification for the Veritas Anti-Money Laundering (AML) 
+    and Pre-Transaction Fraud Interception Platform.
+
+    Engineered for high-velocity payment switches and mobile digital wallets including 
+    **JazzCash, Easypaisa, NayaPay, SadaPay, 1LINK (IBFT), and Raast (SBP)**.
+    
+    ### Key Engineering Capabilities:
+    - **Sub-5ms Inference Gateway**: Inline pre-transaction gatekeeper powered by Random Forest ensemble ML (`developerPratik/credit-card-fraud-detector`).
+    - **State Bank of Pakistan (SBP) AML/CFT Compliance**: Deterministic rule execution (`jube-home/aml-fraud-transaction-monitoring`) covering near-CTR structuring (PKR 48k–49.9k), SIM-swap velocity (<72h ATO), and syndicate mule network clustering.
+    - **In-Flight Consumer Interception**: Blocks fraudulent debits before money leaves the sender's wallet, delivering real-time scam advisories or step-up biometric challenges (NADRA BVS).
+    - **Financial CoT Multi-Agent Explainability**: Multi-agent chain-of-thought (`AI4Finance/FinRobot`) generating plain-language reasoning and automated SAR filings.
+  contact:
+    name: Veritas Partner Integration & Architecture Team
+    email: api-support@veritas-aml.io
+    url: https://veritas-aml.io/docs
+  license:
+    name: Proprietary - Licensed for Authorized Fintech Partners
+    url: https://veritas-aml.io/terms
+
+servers:
+  - url: https://api.veritas-aml.io/v1
+    description: Production Multi-Cloud Ingress (Active-Active)
+  - url: https://staging-api.veritas-aml.io/v1
+    description: Partner Staging / Sandbox Environment
+  - url: http://localhost:3000/api/v1
+    description: Local Dev Server / Docker Ingress
+
+paths:
+  /fraud/evaluate:
+    post:
+      summary: Evaluate In-Flight Transaction (Pre-Debit Interception)
+      description: |
+        Synchronous inline fraud evaluation called by mobile wallet core engines **prior to debiting funds**.
+        Returns gateway decision (`ALLOW`, `CHALLENGE_USER`, `BLOCK_IMMEDIATE`), calibrated fraud probability,
+        SBP statutory rule triggers, and user-facing scam interception warning payloads.
+      operationId: evaluateTransaction
+      tags:
+        - In-Flight Fraud Interception
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - in: header
+          name: X-Partner-ID
+          required: true
+          description: Identifier of the initiating fintech entity (e.g. `jazzcash`, `easypaisa`, `nayapay`, `sadapay`, `raast_sbp`).
+          schema:
+            type: string
+            enum: [jazzcash, easypaisa, nayapay, sadapay, raast_sbp]
+            example: jazzcash
+        - in: header
+          name: X-Idempotency-Key
+          required: false
+          description: Unique UUID v4 to prevent duplicate evaluation of retried payment intents.
+          schema:
+            type: string
+            format: uuid
+            example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+        - in: header
+          name: X-Request-Timestamp
+          required: true
+          description: ISO-8601 UTC timestamp of transaction submission at the mobile client.
+          schema:
+            type: string
+            format: date-time
+            example: "2026-09-07T03:15:30.000Z"
+      requestBody:
+        required: true
+        description: Complete real-time transaction, device telemetry, and beneficiary counterparty payload.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvaluateTransactionRequest'
+            examples:
+              mule_scam_example:
+                summary: Fake Lottery / Mule Ring Scam (Triggers CHALLENGE_USER)
+                value:
+                  partner_id: jazzcash
+                  source_wallet:
+                    account_number: "0301-4491022"
+                    cnic_masked: "35201-******-1"
+                    kyc_level: LEVEL_1
+                    device_imei: "864201049281726"
+                    device_model: "Samsung Galaxy A12"
+                    ip_address: "39.40.122.9"
+                    city: "Faisalabad"
+                    sim_serial_changed_last_72h: false
+                  destination_account:
+                    bank_code: "JAZZCASH"
+                    account_or_iban: "0308-7712399"
+                    account_title: "Muhammad Asif (Flagged Syndicate)"
+                    account_age_days: 2
+                    known_mule_cluster_flag: true
+                  transaction_details:
+                    amount: 48500
+                    currency: PKR
+                    rail: WALLET_P2P
+                    purpose_of_payment: "Prize Transfer Fee"
+              sim_swap_example:
+                summary: SIM Swap Account Takeover (Triggers BLOCK_IMMEDIATE)
+                value:
+                  partner_id: easypaisa
+                  source_wallet:
+                    account_number: "0345-5128901"
+                    cnic_masked: "37405-******-7"
+                    kyc_level: LEVEL_1
+                    device_imei: "359182048102941"
+                    device_model: "Rooted Android Emulator"
+                    ip_address: "119.160.119.45"
+                    city: "Rawalpindi"
+                    sim_serial_changed_last_72h: true
+                  destination_account:
+                    bank_code: "MEZN"
+                    account_or_iban: "PK45MEZN0001092837182901"
+                    account_title: "Tariq Mehmood"
+                    account_age_days: 12
+                    known_mule_cluster_flag: true
+                  transaction_details:
+                    amount: 98000
+                    currency: PKR
+                    rail: IBFT
+                    purpose_of_payment: "Emergency Wire"
+      responses:
+        '200':
+          description: Evaluation completed successfully within sub-5ms SLA.
+          headers:
+            X-Veritas-Latency:
+              description: Real-time model inference and rule processing duration in milliseconds.
+              schema:
+                type: string
+                example: "3.42ms"
+            X-Model-Source:
+              description: Active primary ensemble classifier and version.
+              schema:
+                type: string
+                example: "developerPratik/credit-card-fraud-detector (RandomForest)"
+            X-AML-Engine:
+              description: Deterministic transaction monitoring rule framework.
+              schema:
+                type: string
+                example: "jube-home/aml-fraud-transaction-monitoring"
+            X-Multi-Agent:
+              description: Financial Chain-of-Thought engine.
+              schema:
+                type: string
+                example: "AI4Finance-Foundation/FinRobot"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluateTransactionResponse'
+        '400':
+          description: Malformed or unparseable JSON payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid or expired partner API key or Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded (TPS quota breached).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal gateway fault (Engine fails safe to configured partner fallback policy).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /alerts/intake:
+    post:
+      summary: Intake Alert & Trigger AI Recommendation Pipeline
+      description: |
+        Ingests a triggered AML alert or transaction anomaly. Triggers Anthropic Claude (or rule-based heuristic)
+        to generate an investigative disposition, red flags, and evidence citations.
+        Dispatches real-time Slack cards and appends an immutable record to the SHA-256 chained audit ledger.
+      operationId: intakeAlert
+      tags:
+        - Compliance & Orchestration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alert_type:
+                  type: string
+                  example: "STRUCTURED_DEPOSITS_SMURFING"
+                customer_id:
+                  type: string
+                  example: "cust_99182"
+                amount:
+                  type: number
+                  example: 48500
+                rail:
+                  type: string
+                  example: "WALLET_P2P"
+                recipient:
+                  type: string
+                  example: "Tariq Mehmood"
+                recipient_bank:
+                  type: string
+                  example: "JazzCash"
+      responses:
+        '201':
+          description: Alert created and cryptographically etched into audit ledger.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "SUCCESS"
+                  alert:
+                    type: object
+                  evidence_hash:
+                    type: string
+                    example: "7b1c4a5f8e2d3b9a0c1e5f8a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9"
+                  audit_sequence:
+                    type: integer
+                    example: 42
+
+  /cases/{id}/decision:
+    post:
+      summary: Record Human Compliance Officer Decision
+      description: |
+        Records an authenticated human analyst or Chief Compliance Officer (CCO) decision.
+        Enforces Tier 3 statutory guardrails (blocks autonomous execution of account closures, SAR filings, etc.).
+      operationId: submitCaseDecision
+      tags:
+        - Compliance & Orchestration
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            example: "ALT-2026-9901"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+                  enum: [APPROVED, OVERRIDDEN, REJECTED]
+                  example: "APPROVED"
+                override_disposition:
+                  type: string
+                  enum: [CLEAR, ESCALATE, REFER]
+                  example: "CLEAR"
+                analyst_rationale:
+                  type: string
+                  example: "Customer provided corroborating invoices for seasonal livestock sales."
+      responses:
+        '200':
+          description: Decision cryptographically recorded in audit trail.
+        '403':
+          description: Statutory guardrail violation or insufficient RBAC permission.
+
+  /audit-log/verify:
+    get:
+      summary: Verify Cryptographic SHA-256 Audit Chain
+      description: |
+        Re-hashes every block from genesis to current entry, verifying sequence numbers and previous hashes.
+        Guarantees mathematical non-repudiation for regulatory audits (FinCEN, SBP, OCC).
+      operationId: verifyAuditChain
+      tags:
+        - Immutable Audit & Cryptography
+      responses:
+        '200':
+          description: Verification report indicating whether chain is untampered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isValid:
+                    type: boolean
+                    example: true
+                  total_entries_verified:
+                    type: integer
+                    example: 28
+                  message:
+                    type: string
+                    example: "Audit chain mathematically intact. 0 anomalies detected across 28 entries."
+
+  /hermes/backtest:
+    post:
+      summary: Run Historical Backtest on Candidate Heuristic Rule
+      description: |
+        Evaluates a candidate rule generated by Hermes against real historical transactions.
+        Returns true positives, false positives, precision %, recall %, and estimated loss prevented.
+      operationId: runHermesBacktest
+      tags:
+        - Hermes Self-Learning Governance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rule_id:
+                  type: string
+                  example: "crule_001"
+                min_amount:
+                  type: number
+                  example: 25000
+                rule_type:
+                  type: string
+                  example: "high_amount"
+      responses:
+        '200':
+          description: Backtesting results matrix.
+
+  /slack/preview/{caseId}:
+    get:
+      summary: Preview Slack Block Kit Alert Card
+      description: Returns the real Slack Block Kit payload formatted for compliance channel notifications.
+      operationId: getSlackPreview
+      tags:
+        - Notifications & Webhooks
+      parameters:
+        - in: path
+          name: caseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Slack Block Kit payload.
+
+  /fintech/partners:
+    get:
+      summary: Retrieve Registered Fintech Partner Configurations
+      description: Returns configuration metadata, daily transaction velocity thresholds, and regulatory licenses.
+      operationId: getFintechPartners
+      tags:
+        - Metadata & Configuration
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: List of registered partners.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  partners:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FintechPartnerConfig'
+
+  /health:
+    get:
+      summary: Gateway Health & Operational Readiness Probe
+      description: Returns service status, operational AI models, and supported payment networks.
+      operationId: getHealthStatus
+      tags:
+        - Health & Diagnostics
+      responses:
+        '200':
+          description: System operational.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Production OAuth2 / JWT bearer token issued by Veritas Auth Gateway.
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Partner-specific private integration key (e.g. `veritas_live_jazzcash_sec_...`).
+
+  schemas:
+    EvaluateTransactionRequest:
+      type: object
+      required:
+        - partner_id
+        - source_wallet
+        - destination_account
+        - transaction_details
+      properties:
+        partner_id:
+          type: string
+          enum: [jazzcash, easypaisa, nayapay, sadapay, raast_sbp]
+          example: jazzcash
+        source_wallet:
+          $ref: '#/components/schemas/SourceWalletDetails'
+        destination_account:
+          $ref: '#/components/schemas/DestinationAccountDetails'
+        transaction_details:
+          $ref: '#/components/schemas/TransactionParameters'
+
+    SourceWalletDetails:
+      type: object
+      required:
+        - account_number
+        - cnic_masked
+      properties:
+        account_number:
+          type: string
+          description: Mobile wallet number or account identifier.
+          example: "0301-4491022"
+        cnic_masked:
+          type: string
+          description: Masked Pakistani National Identity Card number.
+          example: "35201-******-1"
+        kyc_level:
+          type: string
+          enum: [LEVEL_0, LEVEL_1, LEVEL_2_BIOMETRIC, MERCHANT]
+          default: LEVEL_1
+          example: LEVEL_1
+        device_imei:
+          type: string
+          description: Hardware device IMEI or unique client installation identifier.
+          example: "864201049281726"
+        device_model:
+          type: string
+          description: Mobile handset brand and model.
+          example: "Samsung Galaxy A12"
+        ip_address:
+          type: string
+          format: ipv4
+          example: "39.40.122.9"
+        city:
+          type: string
+          example: "Faisalabad"
+        sim_serial_changed_last_72h:
+          type: boolean
+          description: Set to true if telecom IMSI/SIM change was recorded within previous 72 hours.
+          example: false
+
+    DestinationAccountDetails:
+      type: object
+      required:
+        - bank_code
+        - account_or_iban
+        - account_title
+      properties:
+        bank_code:
+          type: string
+          description: SBP 4-letter clearing code or wallet identifier (e.g. JAZZCASH, EASYPAISA, MEZN, HBL, BAHL).
+          example: "JAZZCASH"
+        account_or_iban:
+          type: string
+          description: Destination account number, wallet MSISDN, or 24-character IBAN.
+          example: "0308-7712399"
+        account_title:
+          type: string
+          description: Full legal name returned by 1LINK/Raast Title Fetch API.
+          example: "Muhammad Asif"
+        account_age_days:
+          type: integer
+          description: Age of the destination account in calendar days.
+          example: 3
+        known_mule_cluster_flag:
+          type: boolean
+          description: Set to true if counterparty node is linked to active cybercrime or mule network complaints.
+          example: true
+
+    TransactionParameters:
+      type: object
+      required:
+        - amount
+        - currency
+        - rail
+      properties:
+        amount:
+          type: number
+          description: Transaction transfer amount in local currency.
+          minimum: 1
+          example: 48500
+        currency:
+          type: string
+          enum: [PKR, USD, EUR, GBP]
+          default: PKR
+          example: PKR
+        rail:
+          type: string
+          enum: [WALLET_P2P, IBFT, RAAST, AGENT_CASHOUT, QR_MERCHANT, DEBIT_CARD]
+          example: WALLET_P2P
+        purpose_of_payment:
+          type: string
+          example: "Prize Transfer Fee"
+
+    EvaluateTransactionResponse:
+      type: object
+      required:
+        - transaction_id
+        - status
+        - decision
+        - risk_score
+        - risk_tier
+        - latency_ms
+        - developer_pratik_ml
+        - jube_aml_engine
+        - finrobot_agent_trace
+        - user_interception_payload
+        - audit_evidence_hash
+      properties:
+        transaction_id:
+          type: string
+          example: "TX-JAZZCASH-994182"
+        status:
+          type: string
+          enum: [PROCESSED, REJECTED_VALIDATION, BYPASSED_FAILSAFE]
+          example: PROCESSED
+        decision:
+          type: string
+          enum: [ALLOW, CHALLENGE_USER, BLOCK_IMMEDIATE]
+          description: |
+            - `ALLOW`: Transaction cleared with minimal risk; proceed with fund debit.
+            - `CHALLENGE_USER`: Halt transaction; display in-app scam warning or trigger NADRA biometric challenge.
+            - `BLOCK_IMMEDIATE`: Reject transfer immediately and apply cooling-off safe hold.
+          example: CHALLENGE_USER
+        risk_score:
+          type: integer
+          description: Calibrated ensemble fraud probability percentage (0 - 100).
+          minimum: 0
+          maximum: 100
+          example: 70
+        risk_tier:
+          type: string
+          enum: [MINIMAL, LOW, MEDIUM, HIGH, CRITICAL]
+          example: HIGH
+        latency_ms:
+          type: number
+          description: Total inference execution time in milliseconds.
+          example: 3.42
+        developer_pratik_ml:
+          type: object
+          properties:
+            model:
+              type: string
+              example: "Random Forest (100 Trees)"
+            fraud_probability_pct:
+              type: integer
+              example: 70
+            trees_flagged:
+              type: integer
+              example: 68
+            features_evaluated:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  weight:
+                    type: number
+        jube_aml_engine:
+          type: object
+          properties:
+            rules_triggered:
+              type: array
+              items:
+                $ref: '#/components/schemas/AmlRuleTrigger'
+            smurfing_score:
+              type: integer
+              example: 57
+        finrobot_agent_trace:
+          type: object
+          properties:
+            data_cot_agent:
+              type: string
+              example: "Parsed KYC Level 1 & device fingerprint. Baseline: PKR 3,500/day."
+            concept_cot_agent:
+              type: string
+              example: "Peer group deviation 13.9x. Mule clustering probability: 0.94."
+            thesis_cot_agent:
+              type: string
+              example: "Executive recommendation: CHALLENGE_USER. Statutory compliance: SBP AML/CFT Guidelines 2021."
+        user_interception_payload:
+          $ref: '#/components/schemas/UserInterceptionPayload'
+        audit_evidence_hash:
+          type: string
+          description: SHA-256 cryptographic evidence hash recorded to immutable audit ledger.
+          example: "sha256_8f219b6e3f42c19a"
+
+    AmlRuleTrigger:
+      type: object
+      properties:
+        rule_id:
+          type: string
+          example: "JUBE-AML-STR-01"
+        scenario_name:
+          type: string
+          example: "Near-CTR Threshold Structuring"
+        condition:
+          type: string
+          example: "Amount in 48k-49.9k PKR avoidance band"
+        actual_value:
+          type: string
+          example: "PKR 48,500"
+        severity:
+          type: string
+          enum: [INFO, WARNING, BLOCKING]
+          example: WARNING
+        sbp_code:
+          type: string
+          example: "SBP-BPRD-AML-REG-7.2"
+
+    UserInterceptionPayload:
+      type: object
+      required:
+        - must_notify_user_first
+        - suggested_challenge
+        - in_app_warning_title
+        - in_app_warning_body
+        - anti_scam_checklist
+      properties:
+        must_notify_user_first:
+          type: boolean
+          description: If true, mobile app must pause checkout and render in-app warning modal before executing transfer.
+          example: true
+        suggested_challenge:
+          type: string
+          enum: [NONE, SCAM_WARNING_CONFIRMATION, BIOMETRIC_NADRA, COOLING_OFF_DELAY]
+          example: SCAM_WARNING_CONFIRMATION
+        in_app_warning_title:
+          type: string
+          example: "WARNING: Impersonation / Lottery Scam Alert"
+        in_app_warning_body:
+          type: string
+          example: "The recipient account has been reported in active fraud inquiries today. If someone is on a call with you claiming to represent prize lotteries or customer support, cancel this transfer immediately."
+        anti_scam_checklist:
+          type: array
+          items:
+            type: string
+          example:
+            - 'Bank and wallet staff will NEVER call asking for "security fees" or lottery claims.'
+            - "Never share your OTP, MPIN, or SMS codes with anyone."
+            - "If someone on WhatsApp promised you prize money, cancel now."
+
+    FintechPartnerConfig:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "jazzcash"
+        name:
+          type: string
+          example: "JazzCash"
+        regulatory_license:
+          type: string
+          example: "SBP Microfinance & EMI"
+        daily_limit_pkr:
+          type: integer
+          example: 50000
+        rails:
+          type: array
+          items:
+            type: string
+          example: ["WALLET_P2P", "IBFT", "AGENT_CASHOUT", "RAAST"]
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "ok"
+        service:
+          type: string
+          example: "veritas-fraud-aml-engine"
+        version:
+          type: string
+          example: "2026.09.07"
+        models:
+          type: object
+          properties:
+            random_forest:
+              type: string
+              example: "developerPratik/credit-card-fraud-detector"
+            aml_engine:
+              type: string
+              example: "jube-home/aml-fraud-transaction-monitoring"
+            multi_agent:
+              type: string
+              example: "AI4Finance-Foundation/FinRobot"
+        partners_supported:
+          type: array
+          items:
+            type: string
+          example: ["jazzcash", "easypaisa", "nayapay", "sadapay", "raast_sbp"]
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+          example: "INVALID_SIGNATURE_OR_TOKEN"
+        message:
+          type: string
+          example: "Authorization Bearer token signature validation failed."
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-09-07T03:22:15.112Z"

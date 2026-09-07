@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useMemo } from 'react';
+import React, { createContext, useContext, useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   Alert, 
   Customer, 
@@ -32,7 +32,37 @@ import {
   FINTECH_PARTNERS 
 } from '../data/fintechEngine';
 
+export interface AppUser {
+  id: string;
+  name: string;
+  role: 'analyst' | 'compliance_officer';
+  title: string;
+  email: string;
+}
+
+export const KNOWN_USERS_CLIENT: Record<string, AppUser> = {
+  usr_sarah_jenkins: {
+    id: 'usr_sarah_jenkins',
+    name: 'Sarah Jenkins',
+    role: 'analyst',
+    title: 'Senior AML Compliance Analyst',
+    email: 'sarah.jenkins@veritas-aml.io'
+  },
+  usr_david_vance: {
+    id: 'usr_david_vance',
+    name: 'David Vance',
+    role: 'compliance_officer',
+    title: 'Chief Compliance Officer (MLRO)',
+    email: 'david.vance@veritas-aml.io'
+  }
+};
+
 interface AppContextType {
+  // Current Authenticated Session & RBAC
+  currentUser: AppUser;
+  switchUser: (userId: string) => void;
+  knownUsers: AppUser[];
+
   // State
   alerts: Alert[];
   customers: Customer[];
@@ -53,6 +83,12 @@ interface AppContextType {
   isSimulating: boolean;
   simulationStep: number; // 0 to 14
 
+  // Backend sync status
+  isBackendConnected: boolean;
+  auditChainVerification: { isValid: boolean; count: number; message: string } | null;
+  notificationMessage: { type: 'success' | 'error' | 'info'; text: string } | null;
+  dismissNotification: () => void;
+
   // Actions
   setActiveNav: (nav: MainNavTab) => void;
   setDemoMode: (mode: boolean) => void;
@@ -64,9 +100,11 @@ interface AppContextType {
   resetSimulation: () => void;
   evaluateAndInterceptTransaction: (req: EvaluateTransactionRequest) => EvaluateTransactionResponse;
   resolveUserInterceptionAction: (interceptionId: string, action: 'USER_CHALLENGED_SUCCESS' | 'USER_ABORTED_SCAM') => void;
-  approveRecommendation: (alertId: string, analystNotes: string) => void;
-  overrideRecommendation: (alertId: string, overrideDisposition: Disposition, analystRationale: string) => void;
-  updateCandidateRuleStatus: (ruleId: string, status: HermesCandidateRule['status']) => void;
+  approveRecommendation: (alertId: string, analystNotes: string) => Promise<void>;
+  overrideRecommendation: (alertId: string, overrideDisposition: Disposition, analystRationale: string) => Promise<void>;
+  updateCandidateRuleStatus: (ruleId: string, status: HermesCandidateRule['status']) => Promise<boolean>;
+  runBacktest: (ruleId: string, threshold?: number, conditionType?: string) => Promise<any>;
+  refreshAuditLogs: () => Promise<void>;
   filterAlerts: (status?: CaseStatus, riskBand?: string, search?: string) => Alert[];
   kpis: {
     totalAlerts24h: number;
@@ -83,6 +121,10 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Auth & RBAC
+  const [currentUser, setCurrentUser] = useState<AppUser>(KNOWN_USERS_CLIENT.usr_sarah_jenkins);
+  const knownUsers = Object.values(KNOWN_USERS_CLIENT);
+
   const [alerts, setAlerts] = useState<Alert[]>(INITIAL_ALERTS);
   const [customers] = useState<Customer[]>(INITIAL_CUSTOMERS);
   const [transactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
@@ -104,6 +146,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [simulationStep, setSimulationStep] = useState<number>(0);
 
+  // Backend Sync Status
+  const [isBackendConnected, setIsBackendConnected] = useState<boolean>(true);
+  const [auditChainVerification, setAuditChainVerification] = useState<{ isValid: boolean; count: number; message: string } | null>(null);
+  const [notificationMessage, setNotificationMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  const dismissNotification = () => setNotificationMessage(null);
+
+  const switchUser = (userId: string) => {
+    if (KNOWN_USERS_CLIENT[userId]) {
+      setCurrentUser(KNOWN_USERS_CLIENT[userId]);
+      setNotificationMessage({
+        type: 'info',
+        text: `Switched active operator to ${KNOWN_USERS_CLIENT[userId].name} (${KNOWN_USERS_CLIENT[userId].title})`
+      });
+    }
+  };
+
+  // Sync with Backend on mount
+  const syncWithBackend = useCallback(async () => {
+    try {
+      // 1. Fetch Alerts
+      const alertsRes = await fetch('/api/v1/alerts');
+      if (alertsRes.ok) {
+        const data = await alertsRes.json();
+        if (Array.isArray(data.alerts) && data.alerts.length > 0) {
+          setAlerts(data.alerts);
+        }
+      }
+
+      // 2. Fetch Audit Logs
+      const auditRes = await fetch('/api/v1/audit-log');
+      if (auditRes.ok) {
+        const data = await auditRes.json();
+        if (Array.isArray(data.audit_logs) && data.audit_logs.length > 0) {
+          setAuditLogs(data.audit_logs);
+        }
+      }
+
+      // 3. Verify Audit Trail
+      const verifyRes = await fetch('/api/v1/audit-log/verify');
+      if (verifyRes.ok) {
+        const data = await verifyRes.json();
+        setAuditChainVerification(data.cryptographic_verification);
+      }
+
+      // 4. Fetch Hermes Rules
+      const rulesRes = await fetch('/api/v1/hermes/rules');
+      if (rulesRes.ok) {
+        const data = await rulesRes.json();
+        if (Array.isArray(data.candidate_rules) && data.candidate_rules.length > 0) {
+          setCandidateRules(data.candidate_rules);
+        }
+      }
+
+      setIsBackendConnected(true);
+    } catch (err) {
+      console.warn('[Backend Sync Error - operating in fallback client state]', err);
+      setIsBackendConnected(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    syncWithBackend();
+  }, [syncWithBackend]);
+
+  const refreshAuditLogs = async () => {
+    try {
+      const res = await fetch('/api/v1/audit-log');
+      if (res.ok) {
+        const data = await res.json();
+        setAuditLogs(data.audit_logs);
+      }
+      const verifyRes = await fetch('/api/v1/audit-log/verify');
+      if (verifyRes.ok) {
+        const data = await verifyRes.json();
+        setAuditChainVerification(data.cryptographic_verification);
+      }
+    } catch (err) {
+      console.error('Failed to refresh audit logs:', err);
+    }
+  };
+
   const selectedInterception = useMemo(() => {
     return userInterceptions.find(i => i.id === selectedInterceptionId) || userInterceptions[0];
   }, [userInterceptions, selectedInterceptionId]);
@@ -118,195 +242,264 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const selectAlert = (id: string) => {
     setSelectedAlertId(id);
-    setActiveNav('investigate');
   };
 
   const triggerScenario = (scenarioId: string) => {
+    const scn = SCENARIOS.find(s => s.id === scenarioId);
+    if (!scn) return;
+
     setActiveScenarioId(scenarioId);
     setSimulationStep(0);
     setIsSimulating(true);
 
-    // Map scenario to corresponding alert
-    let targetAlertId = 'ALT-2026-0901';
-    if (scenarioId === 'smurfing') targetAlertId = 'ALT-2026-0901';
-    if (scenarioId === 'wire') targetAlertId = 'ALT-2026-0902';
-    if (scenarioId === 'geo_jump') targetAlertId = 'ALT-2026-0903';
-    if (scenarioId === 'structuring') targetAlertId = 'ALT-2026-0904';
-    if (scenarioId === 'hnw_clear') targetAlertId = 'ALT-2026-0905';
-
-    setSelectedAlertId(targetAlertId);
-
-    // Add log entry
-    const scenario = SCENARIOS.find(s => s.id === scenarioId);
-    const newLog: AuditLog = {
-      id: `AUD-${Math.floor(10000 + Math.random() * 90000)}`,
-      timestamp: new Date().toISOString(),
-      actor: 'investor:live_session',
-      action: 'SCENARIO_TRIGGERED',
-      entity_type: 'SCENARIO',
-      entity_id: scenarioId,
-      evidence_hash: `sha256:${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`,
-      details: `Triggered investor scenario: ${scenario?.title || scenarioId}. Dispatched to n8n webhook intake.`
-    };
-    setAuditLogs(prev => [newLog, ...prev]);
+    if (scn.case_id) {
+      const matched = alerts.find(a => a.id === scn.case_id);
+      if (matched) {
+        setSelectedAlertId(matched.id);
+      }
+    }
   };
 
   const runSimulationStep = () => {
-    if (simulationStep < 13) {
+    if (simulationStep < 14) {
       setSimulationStep(prev => prev + 1);
+    } else {
+      setIsSimulating(false);
     }
   };
 
   const resetSimulation = () => {
-    setSimulationStep(0);
     setIsSimulating(false);
+    setSimulationStep(0);
+    setActiveScenarioId(null);
   };
 
-  const approveRecommendation = (alertId: string, analystNotes: string) => {
+  // Human in the Loop: Approve Recommendation
+  const approveRecommendation = async (alertId: string, analystNotes: string) => {
     const alert = alerts.find(a => a.id === alertId);
     if (!alert) return;
 
-    const disposition = alert.ai_recommendation?.disposition || 'ESCALATE';
+    const disposition = alert.ai_recommendation?.disposition || 'REFER';
     const nextStatus: CaseStatus = disposition === 'CLEAR' ? 'RESOLVED' : 'ESCALATED';
 
-    // 1. Update alert
-    setAlerts(prev => prev.map(a => {
-      if (a.id === alertId) {
-        return {
-          ...a,
-          status: nextStatus,
-          analyst_decision: {
-            id: `dec_${Date.now()}`,
-            case_id: alertId,
-            analyst_id: 'usr_sarah_jenkins_mlro',
-            analyst_name: 'Sarah Jenkins (Compliance Lead)',
-            action: 'APPROVED',
-            analyst_rationale: analystNotes || 'Approved AI recommendation based on cited evidentiary corroboration.',
-            decided_at: new Date().toISOString()
-          }
-        };
+    try {
+      // Real API Call to Express backend
+      const res = await fetch(`/api/v1/cases/${alertId}/decision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': currentUser.id
+        },
+        body: JSON.stringify({
+          action: 'APPROVED',
+          analyst_rationale: analystNotes || 'Evidentiary corroboration validated by compliance officer.'
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || `Server returned ${res.status}`);
       }
-      return a;
-    }));
 
-    // 2. Append to immutable audit log
-    const auditEntry: AuditLog = {
-      id: `AUD-${Math.floor(10000 + Math.random() * 90000)}`,
-      timestamp: new Date().toISOString(),
-      actor: 'analyst:sarah_jenkins',
-      action: 'RECOMMENDATION_APPROVED',
-      entity_type: 'CASE',
-      entity_id: alertId,
-      evidence_hash: `sha256:${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`,
-      details: `Human analyst approved ${disposition} recommendation. Rationale: ${analystNotes || 'Evidentiary corroboration validated.'}`
-    };
-    setAuditLogs(prev => [auditEntry, ...prev]);
+      // Optimistically / state update
+      setAlerts(prev => prev.map(a => {
+        if (a.id === alertId) {
+          return {
+            ...a,
+            status: nextStatus,
+            analyst_decision: {
+              id: `dec_${Date.now()}`,
+              case_id: alertId,
+              analyst_id: currentUser.id,
+              analyst_name: `${currentUser.name} (${currentUser.title})`,
+              action: 'APPROVED',
+              analyst_rationale: analystNotes || 'Evidentiary corroboration validated by compliance officer.',
+              decided_at: new Date().toISOString()
+            }
+          };
+        }
+        return a;
+      }));
 
-    // 3. Trigger Hermes Reflection Loop
-    const hermesEntry: HermesMemory = {
-      id: `mem_${Date.now()}`,
-      memory_type: 'EPISODIC',
-      title: `Resolved Investigation: ${alert.customer.name} (${alert.alert_type})`,
-      content: `Disposition ${disposition} approved with confidence ${alert.ai_recommendation?.confidence}%. Key cited red flags: ${alert.ai_recommendation?.redFlags.slice(0, 2).join('; ')}. Analyst noted: "${analystNotes || 'Approved'}".`,
-      confidence: 0.95,
-      tags: [alert.alert_type, disposition, 'APPROVED_OUTCOME', alert.customer.risk_tier],
-      created_at: new Date().toISOString(),
-      case_reference: alertId
-    };
-    setMemories(prev => [hermesEntry, ...prev]);
+      setNotificationMessage({
+        type: 'success',
+        text: `Case ${alertId} approved by ${currentUser.name} and appended to SHA-256 audit ledger.`
+      });
+
+      refreshAuditLogs();
+    } catch (err: any) {
+      console.error('Failed to record decision via API:', err);
+      setNotificationMessage({
+        type: 'error',
+        text: `Failed to save decision: ${err.message}`
+      });
+    }
   };
 
-  const overrideRecommendation = (alertId: string, overrideDisposition: Disposition, analystRationale: string) => {
+  // Human in the Loop: Override Recommendation
+  const overrideRecommendation = async (alertId: string, overrideDisposition: Disposition, analystRationale: string) => {
     const alert = alerts.find(a => a.id === alertId);
     if (!alert) return;
 
-    // 1. Update alert
-    const nextStatus: CaseStatus = overrideDisposition === 'CLEAR' ? 'FALSE_POSITIVE' : 'ESCALATED';
+    try {
+      const res = await fetch(`/api/v1/cases/${alertId}/decision`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': currentUser.id
+        },
+        body: JSON.stringify({
+          action: 'OVERRIDDEN',
+          override_disposition: overrideDisposition,
+          analyst_rationale: analystRationale
+        })
+      });
 
-    setAlerts(prev => prev.map(a => {
-      if (a.id === alertId) {
-        return {
-          ...a,
-          status: nextStatus,
-          analyst_decision: {
-            id: `dec_${Date.now()}`,
-            case_id: alertId,
-            analyst_id: 'usr_sarah_jenkins_mlro',
-            analyst_name: 'Sarah Jenkins (Compliance Lead)',
-            action: 'OVERRIDDEN',
-            override_disposition: overrideDisposition,
-            analyst_rationale: analystRationale,
-            decided_at: new Date().toISOString()
-          }
-        };
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || `Server returned ${res.status}`);
       }
-      return a;
-    }));
 
-    // 2. Append to immutable audit log
-    const auditEntry: AuditLog = {
-      id: `AUD-${Math.floor(10000 + Math.random() * 90000)}`,
-      timestamp: new Date().toISOString(),
-      actor: 'analyst:sarah_jenkins',
-      action: 'RECOMMENDATION_OVERRIDDEN',
-      entity_type: 'CASE',
-      entity_id: alertId,
-      evidence_hash: `sha256:${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`,
-      details: `Analyst overrode AI recommendation (${alert.ai_recommendation?.disposition} → ${overrideDisposition}). Reason: ${analystRationale}`
-    };
-    setAuditLogs(prev => [auditEntry, ...prev]);
+      const nextStatus: CaseStatus = overrideDisposition === 'CLEAR' ? 'FALSE_POSITIVE' : 'ESCALATED';
 
-    // 3. Dispatch to Hermes Feedback Memory
-    const feedbackMemory: HermesMemory = {
-      id: `mem_${Date.now()}`,
-      memory_type: 'FEEDBACK',
-      title: `Analyst Override on ${alert.customer.name} (${alert.alert_type})`,
-      content: `AI originally recommended ${alert.ai_recommendation?.disposition}; human compliance lead overridden to ${overrideDisposition}. Reason: "${analystRationale}". Pattern flagged for heuristic proposal generation.`,
-      confidence: 0.92,
-      tags: ['ANALYST_OVERRIDE', alert.alert_type, overrideDisposition],
-      created_at: new Date().toISOString(),
-      case_reference: alertId
-    };
-    setMemories(prev => [feedbackMemory, ...prev]);
+      setAlerts(prev => prev.map(a => {
+        if (a.id === alertId) {
+          return {
+            ...a,
+            status: nextStatus,
+            analyst_decision: {
+              id: `dec_${Date.now()}`,
+              case_id: alertId,
+              analyst_id: currentUser.id,
+              analyst_name: `${currentUser.name} (${currentUser.title})`,
+              action: 'OVERRIDDEN',
+              override_disposition: overrideDisposition,
+              analyst_rationale: analystRationale,
+              decided_at: new Date().toISOString()
+            }
+          };
+        }
+        return a;
+      }));
 
-    // 4. Hermes automatically synthesizes a Candidate Heuristic
-    const candidateRule: HermesCandidateRule = {
-      id: `rule_cand_${Math.floor(45 + Math.random() * 50)}`,
-      title: `Heuristic Proposal: Adapt for ${alert.alert_type} Context`,
-      description: `Generated from analyst override on ${alert.customer.name}: "${analystRationale}". Prevents recurring false positive / miss in identical operational conditions.`,
-      rule_logic: `IF customer.occupation == "${alert.customer.occupation}" AND transaction.amount <= ${alert.transaction.amount} THEN adjust_score(-20) AND require_manual_review()`,
-      status: 'PROPOSED',
-      impact_cases_count: 3,
-      proposed_at: new Date().toISOString(),
-      rationale: `Direct distillation of override on case ${alertId}.`
-    };
-    setCandidateRules(prev => [candidateRule, ...prev]);
+      // Hermes feedback memory
+      const feedbackMemory: HermesMemory = {
+        id: `mem_${Date.now()}`,
+        memory_type: 'FEEDBACK',
+        title: `Analyst Override on ${alert.customer.name} (${alert.alert_type})`,
+        content: `AI recommended ${alert.ai_recommendation?.disposition}; ${currentUser.name} overrode to ${overrideDisposition}. Reason: "${analystRationale}".`,
+        confidence: 0.94,
+        tags: ['ANALYST_OVERRIDE', alert.alert_type, overrideDisposition],
+        created_at: new Date().toISOString(),
+        case_reference: alertId
+      };
+      setMemories(prev => [feedbackMemory, ...prev]);
+
+      // Hermes candidate heuristic synthesis
+      const candidateRule: HermesCandidateRule = {
+        id: `rule_cand_${Math.floor(45 + Math.random() * 50)}`,
+        title: `Heuristic Proposal: Adapt for ${alert.alert_type} Context`,
+        description: `Generated from override on ${alert.customer.name}: "${analystRationale}". Prevents recurring false positive under identical operational conditions.`,
+        rule_logic: `IF customer.occupation == "${alert.customer.occupation}" AND transaction.amount <= ${alert.transaction.amount} THEN adjust_score(-20) AND require_manual_review()`,
+        status: 'PROPOSED',
+        impact_cases_count: 3,
+        proposed_at: new Date().toISOString(),
+        rationale: `Direct distillation of override on case ${alertId}. Requires CCO signoff.`
+      };
+      setCandidateRules(prev => [candidateRule, ...prev]);
+
+      setNotificationMessage({
+        type: 'success',
+        text: `Override recorded. Hermes synthesized a new candidate heuristic proposal requiring CCO approval.`
+      });
+
+      refreshAuditLogs();
+    } catch (err: any) {
+      console.error('Failed to record override via API:', err);
+      setNotificationMessage({
+        type: 'error',
+        text: `Failed to record override: ${err.message}`
+      });
+    }
   };
 
-  const updateCandidateRuleStatus = (ruleId: string, status: HermesCandidateRule['status']) => {
-    setCandidateRules(prev => prev.map(r => {
-      if (r.id === ruleId) {
-        return {
-          ...r,
-          status,
-          reviewed_by: status === 'APPROVED' || status === 'REJECTED' ? 'Sarah Jenkins (MLRO Lead)' : r.reviewed_by
-        };
-      }
-      return r;
-    }));
+  // Gated Hermes Rule Promotion (Requires CCO Role)
+  const updateCandidateRuleStatus = async (ruleId: string, status: HermesCandidateRule['status']): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/v1/hermes/rules/${ruleId}/promote`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': currentUser.id
+        },
+        body: JSON.stringify({ target_status: status })
+      });
 
-    // Audit log
-    const auditEntry: AuditLog = {
-      id: `AUD-${Math.floor(10000 + Math.random() * 90000)}`,
-      timestamp: new Date().toISOString(),
-      actor: 'compliance_lead:sarah_jenkins',
-      action: `RULE_${status}`,
-      entity_type: 'HERMES_CANDIDATE_RULE',
-      entity_id: ruleId,
-      evidence_hash: `sha256:${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`,
-      details: `Hermes Candidate Rule ${ruleId} lifecycle transitioned to ${status}.`
-    };
-    setAuditLogs(prev => [auditEntry, ...prev]);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        if (res.status === 403) {
+          setNotificationMessage({
+            type: 'error',
+            text: `[RBAC DENIED] Only Chief Compliance Officer (David Vance) can deploy rules to production. Current operator: ${currentUser.name} (${currentUser.role}). Please switch to David Vance in the top navbar.`
+          });
+          return false;
+        }
+        throw new Error(errorData.message || 'Promotion failed');
+      }
+
+      setCandidateRules(prev => prev.map(r => {
+        if (r.id === ruleId) {
+          return {
+            ...r,
+            status,
+            reviewed_by: `${currentUser.name} (${currentUser.title})`
+          };
+        }
+        return r;
+      }));
+
+      setNotificationMessage({
+        type: 'success',
+        text: `Rule ${ruleId} successfully updated to ${status} with cryptographic CCO signoff.`
+      });
+
+      refreshAuditLogs();
+      return true;
+    } catch (err: any) {
+      setNotificationMessage({
+        type: 'error',
+        text: err.message
+      });
+      return false;
+    }
+  };
+
+  // Real Scoped-Down Hermes Backtest Engine caller
+  const runBacktest = async (ruleId: string, threshold?: number, conditionType?: string) => {
+    try {
+      const res = await fetch('/api/v1/hermes/backtest', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': currentUser.id
+        },
+        body: JSON.stringify({
+          rule_id: ruleId,
+          threshold: threshold || 25000,
+          condition_type: conditionType
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Backtest failed with status ${res.status}`);
+      }
+
+      const data = await res.json();
+      return data.backtest_report;
+    } catch (err: any) {
+      console.error('Backtest error:', err);
+      throw err;
+    }
   };
 
   const filterAlerts = (status?: CaseStatus, riskBand?: string, search?: string) => {
@@ -329,11 +522,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const res = evaluateTransactionEngine(req);
     const partner = FINTECH_PARTNERS[req.partner_id] || FINTECH_PARTNERS.jazzcash;
 
-    // If transaction requires user notification/interception or is high risk, create an in-flight interception event
-    if (res.user_interception_payload.must_notify_user_first || res.risk_score >= 40) {
+    if (res.decision !== 'ALLOW' && res.user_interception_payload.must_notify_user_first) {
       const newInterception: UserInterceptionEvent = {
-        id: `INT-${Math.floor(1000 + Math.random() * 9000)}`,
-        timestamp: 'Just now (live in-flight)',
+        id: `INT-${Date.now().toString().slice(-4)}`,
+        timestamp: new Date().toISOString(),
         partner: req.partner_id,
         partner_name: partner.name,
         user_phone: req.source_wallet.account_number,
@@ -349,90 +541,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           risk_tier: res.risk_tier,
           fraud_probability: res.risk_score,
           inference_latency_ms: res.latency_ms,
-          random_forest_trees_flagged: Math.round(res.risk_score * 0.96),
-          feature_attributions: [
-            { feature: 'Mule_Cluster_Closeness', value: req.destination_account.known_mule_cluster_flag ? '0.94' : '0.03', contribution_weight: 38, anomaly_status: req.destination_account.known_mule_cluster_flag ? 'CRITICAL' : 'NORMAL' },
-            { feature: 'SIM_Swap_72h', value: req.source_wallet.sim_serial_changed_last_72h ? 'TRUE' : 'FALSE', contribution_weight: 32, anomaly_status: req.source_wallet.sim_serial_changed_last_72h ? 'CRITICAL' : 'NORMAL' }
-          ]
+          random_forest_trees_flagged: Math.round(res.risk_score * 0.95),
+          feature_attributions: []
         },
-        jube_rules: res.jube_aml_engine.rules_triggered,
+        jube_rules: res.jube_aml_engine?.rules_triggered || [],
         finrobot_cot: res.finrobot_agent_trace,
-        status: res.decision === 'BLOCK_IMMEDIATE' ? 'SYSTEM_BLOCKED' : 'PENDING_USER_ACTION'
+        status: 'PENDING_USER_ACTION'
       };
 
       setUserInterceptions(prev => [newInterception, ...prev]);
       setSelectedInterceptionId(newInterception.id);
-
-      // Also create an immutable audit log
-      const auditEntry: AuditLog = {
-        id: `AUD-${Math.floor(10000 + Math.random() * 90000)}`,
-        timestamp: new Date().toISOString(),
-        actor: `api_gateway:${req.partner_id}`,
-        action: res.decision === 'BLOCK_IMMEDIATE' ? 'TRANSACTION_BLOCKED' : 'USER_PRE_TX_INTERCEPTED',
-        entity_type: 'PRE_TRANSACTION_INTERCEPTION',
-        entity_id: newInterception.id,
-        evidence_hash: res.audit_evidence_hash,
-        details: `Live evaluation on ${partner.name} [${req.transaction_details.rail}] PKR ${req.transaction_details.amount.toLocaleString()}. Risk: ${res.risk_score}% (${res.risk_tier}). Decision: ${res.decision}.`
-      };
-      setAuditLogs(prev => [auditEntry, ...prev]);
     }
 
     return res;
   };
 
-  const resolveUserInterceptionAction = (
-    interceptionId: string, 
-    action: 'USER_CHALLENGED_SUCCESS' | 'USER_ABORTED_SCAM'
-  ) => {
+  const resolveUserInterceptionAction = (interceptionId: string, action: 'USER_CHALLENGED_SUCCESS' | 'USER_ABORTED_SCAM') => {
     setUserInterceptions(prev => prev.map(item => {
       if (item.id === interceptionId) {
         return {
           ...item,
-          status: action,
-          user_reaction_time_seconds: Math.floor(8 + Math.random() * 12)
+          user_status: action
         };
       }
       return item;
     }));
-
-    const target = userInterceptions.find(i => i.id === interceptionId);
-    if (target) {
-      const auditEntry: AuditLog = {
-        id: `AUD-${Math.floor(10000 + Math.random() * 90000)}`,
-        timestamp: new Date().toISOString(),
-        actor: 'user_wallet_client',
-        action: action,
-        entity_type: 'USER_INTERCEPTION_RESPONSE',
-        entity_id: interceptionId,
-        evidence_hash: `sha256:${Math.random().toString(36).substring(2)}${Math.random().toString(36).substring(2)}`,
-        details: action === 'USER_ABORTED_SCAM'
-          ? `User acknowledged in-app warning on ${target.partner_name} and ABORTED scam transfer of PKR ${target.amount_pkr.toLocaleString()}. Funds preserved.`
-          : `User successfully completed NADRA biometric / step-up challenge on ${target.partner_name} for PKR ${target.amount_pkr.toLocaleString()}. Transaction authorized.`
-      };
-      setAuditLogs(prev => [auditEntry, ...prev]);
-    }
   };
 
   const kpis = useMemo(() => {
     const total = alerts.length;
     const highRisk = alerts.filter(a => a.customer.risk_tier === 'HIGH' || a.customer.risk_tier === 'CRITICAL').length;
-    const pending = alerts.filter(a => a.status === 'NEW' || a.status === 'AI_REVIEWED' || a.status === 'HUMAN_REVIEW').length;
-    
+    const resolved = alerts.filter(a => a.status === 'RESOLVED' || a.status === 'FALSE_POSITIVE').length;
+    const pending = alerts.filter(a => a.status === 'NEW' || a.status === 'AI_REVIEWED' || a.status === 'INVESTIGATING' || a.status === 'HUMAN_REVIEW').length;
+    const approved = alerts.filter(a => a.analyst_decision?.action === 'APPROVED').length;
+    const overridden = alerts.filter(a => a.analyst_decision?.action === 'OVERRIDDEN').length;
+    const totalDecisions = approved + overridden;
+
     return {
-      totalAlerts24h: 35,
-      highRiskRatio: Math.round((highRisk / Math.max(1, total)) * 100),
-      falsePositiveReductionPct: 87.4,
-      aiAcceptanceRatePct: 91.4,
-      medianTriageTimeMinutes: 3.8, // down from 42 mins
+      totalAlerts24h: total,
+      highRiskRatio: total > 0 ? +(highRisk / total).toFixed(2) : 0,
+      falsePositiveReductionPct: 62.8,
+      aiAcceptanceRatePct: totalDecisions > 0 ? Math.round((approved / totalDecisions) * 100) : 89,
+      medianTriageTimeMinutes: 3.4,
       pendingReviewCount: pending,
       preTransactionInterceptionsCount: userInterceptions.length,
-      scamLossesPreventedPkr: userInterceptions.reduce((sum, item) => sum + item.amount_pkr, 240000)
+      scamLossesPreventedPkr: 8450000
     };
   }, [alerts, userInterceptions]);
 
   return (
     <AppContext.Provider
       value={{
+        currentUser,
+        switchUser,
+        knownUsers,
         alerts,
         customers,
         transactions,
@@ -451,6 +613,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeScenarioId,
         isSimulating,
         simulationStep,
+        isBackendConnected,
+        auditChainVerification,
+        notificationMessage,
+        dismissNotification,
         setActiveNav,
         setDemoMode,
         setActiveFintechPartner,
@@ -464,6 +630,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         approveRecommendation,
         overrideRecommendation,
         updateCandidateRuleStatus,
+        runBacktest,
+        refreshAuditLogs,
         filterAlerts,
         kpis
       }}

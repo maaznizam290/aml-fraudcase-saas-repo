@@ -14,6 +14,7 @@ import { BlueprintInspector } from './components/BlueprintInspector';
 import { PromptViewer } from './components/PromptViewer';
 import { BudgetBreakdown } from './components/BudgetBreakdown';
 import { AuditLogModal } from './components/AuditLogModal';
+import { QaReportModal } from './components/QaReportModal';
 import { generateClaudeCodePrompt } from './data/masterPrompt';
 import { PromptConfig } from './types';
 
@@ -21,6 +22,7 @@ const MainLayout: React.FC = () => {
   const { activeNav, setActiveNav } = useApp();
   const [copied, setCopied] = useState(false);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
+  const [showQaReport, setShowQaReport] = useState(false);
 
   const [promptConfig, setPromptConfig] = useState<PromptConfig>({
     includeDemoMode: true,
@@ -46,6 +48,7 @@ const MainLayout: React.FC = () => {
         onCopyPrompt={handleCopyPrompt}
         copied={copied}
         onOpenAuditLogs={() => setShowAuditLogs(true)}
+        onOpenQaReport={() => setShowQaReport(true)}
       />
 
       {/* Sticky Investor Demo Bar (5 VC Scenarios, 14-Step Progress, Pitch Notes, Offline/Live Toggle) */}
@@ -76,6 +79,11 @@ const MainLayout: React.FC = () => {
       {/* Audit Log Modal */}
       {showAuditLogs && (
         <AuditLogModal onClose={() => setShowAuditLogs(false)} />
+      )}
+
+      {/* QA Test Suite & Regulatory Compliance Report Modal */}
+      {showQaReport && (
+        <QaReportModal onClose={() => setShowQaReport(false)} />
       )}
 
       {/* Geometric Balance Technical Status Bar Footer */}

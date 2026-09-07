@@ -125,11 +125,14 @@ export interface Alert {
 
 export interface AuditLog {
   id: string;
+  sequence_number?: number;
   timestamp: string;
   actor: string;
+  actor_id?: string;
   action: string;
   entity_type: string;
   entity_id: string;
+  previous_hash?: string;
   evidence_hash: string;
   details: string;
 }
@@ -173,6 +176,7 @@ export interface HermesCandidateRule {
   impact_cases_count: number;
   proposed_at: string;
   reviewed_by?: string;
+  reviewed_at?: string;
   rationale: string;
 }
 
@@ -192,6 +196,7 @@ export interface ModelRegistryItem {
 
 export interface ScenarioDefinition {
   id: string;
+  case_id?: string;
   title: string;
   badge: string;
   description: string;

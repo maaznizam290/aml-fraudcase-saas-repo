@@ -31,7 +31,8 @@ export const InvestigationWorkspace: React.FC = () => {
     transactions, 
     approveRecommendation, 
     overrideRecommendation,
-    demoMode
+    demoMode,
+    currentUser
   } = useApp();
 
   const [showSlackModal, setShowSlackModal] = useState<boolean>(false);
@@ -353,7 +354,7 @@ export const InvestigationWorkspace: React.FC = () => {
                   AI_INVESTIGATOR_HUB
                 </span>
               </div>
-              <span className="text-[10px] text-purple-400 font-bold">CLAUDE 3.7 SONNET</span>
+              <span className="text-[10px] text-purple-400 font-bold uppercase">{ai?.model_used || 'CLAUDE 3.5 SONNET / HEURISTICS'}</span>
             </div>
 
             {/* Recommendation Banner */}
@@ -384,8 +385,11 @@ export const InvestigationWorkspace: React.FC = () => {
             {ml && (
               <div className="p-3 bg-[#0F172A] border border-[#1E293B] rounded-xs space-y-2">
                 <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase font-bold">
-                  <span>ML Model Breakdown (GitHub Repo)</span>
-                  <span className="text-cyan-400">DuckDB Feature Store</span>
+                  <span>ML Model Breakdown</span>
+                  <span className="text-cyan-400 text-[9px]">Heuristic Ensembles</span>
+                </div>
+                <div className="text-[10px] text-slate-500 italic pb-1 border-b border-[#1E293B]">
+                  *Rule-based anomaly scoring (ML model not yet deployed; architecture reference weights below)
                 </div>
                 <div className="space-y-1.5 text-[11px]">
                   <div className="flex items-center justify-between">
@@ -513,6 +517,11 @@ export const InvestigationWorkspace: React.FC = () => {
               You are approving the AI recommendation to <strong>{ai?.disposition}</strong> Case {alert.id} ({customer.name}). This will be cryptographically etched into the PostgreSQL audit log and dispatched to Hermes learning.
             </p>
 
+            <div className="p-2 bg-[#0F172A] border border-[#1E293B] rounded-xs text-[10px] text-slate-400 flex items-center justify-between">
+              <span>Signatory: <strong className="text-white">{currentUser.name}</strong></span>
+              <span className="text-cyan-400 uppercase font-bold">{currentUser.title}</span>
+            </div>
+
             <div>
               <label className="block text-[10px] text-slate-400 uppercase mb-1">
                 Compliance Analyst Rationale Notes:
@@ -563,6 +572,11 @@ export const InvestigationWorkspace: React.FC = () => {
             <p className="text-slate-300 font-sans leading-relaxed text-xs">
               Override Claude recommendation ({ai?.disposition}). This override will be recorded in Hermes Feedback Memory and trigger a candidate heuristic rule proposal.
             </p>
+
+            <div className="p-2 bg-[#0F172A] border border-[#1E293B] rounded-xs text-[10px] text-slate-400 flex items-center justify-between">
+              <span>Overriding Officer: <strong className="text-white">{currentUser.name}</strong></span>
+              <span className="text-cyan-400 uppercase font-bold">{currentUser.title}</span>
+            </div>
 
             <div>
               <label className="block text-[10px] text-slate-400 uppercase mb-1">
